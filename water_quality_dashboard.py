@@ -1,14 +1,13 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 from datetime import datetime
 import sys
 
 # Page configuration - professional styling
 st.set_page_config(
     page_title="Water Quality Monitoring System",
-    page_icon=None,  # No icon for professional look
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -95,16 +94,8 @@ with st.sidebar:
     
     if st.session_state.predictions_history:
         latest = st.session_state.predictions_history[-1]
-        if 'prediction' in latest:
-            st.metric("Last Prediction", latest['prediction'])
-
-# Load model function (if needed)
-def load_model():
-    try:
-        # Your model loading code here
-        return None, None, None
-    except:
-        return None, None, None
+        if 'overall_quality' in latest:
+            st.metric("Last Prediction", latest['overall_quality'])
 
 # Page 1: Main Dashboard
 if page == "Dashboard":
@@ -134,18 +125,29 @@ if page == "Dashboard":
         # Water Quality Chart using Streamlit's built-in charts
         st.markdown('<h2 class="section-header">Parameter Trends</h2>', unsafe_allow_html=True)
         
-        # Generate sample data for charts
+        # Generate sample data for charts if no real data
         if st.session_state.sensor_data:
             chart_data = pd.DataFrame(st.session_state.sensor_data)
             
             if 'temperature' in chart_data.columns and 'ph' in chart_data.columns:
                 # Line chart for temperature and pH
                 st.line_chart(chart_data[['temperature', 'ph']].tail(20))
-            
-            # Bar chart for latest readings
-            if len(chart_data) > 0:
-                latest_readings = chart_data.iloc[-1][['temperature', 'ph', 'dissolved_oxygen']]
-                st.bar_chart(latest_readings)
+            else:
+                # Sample data for demo
+                sample_data = pd.DataFrame({
+                    'hour': range(24),
+                    'temperature': [25 + np.sin(i/3) for i in range(24)],
+                    'ph': [7.0 + 0.3 * np.cos(i/4) for i in range(24)]
+                })
+                st.line_chart(sample_data.set_index('hour')[['temperature', 'ph']])
+        else:
+            # Sample data for demo
+            sample_data = pd.DataFrame({
+                'hour': range(24),
+                'temperature': [25 + np.sin(i/3) for i in range(24)],
+                'ph': [7.0 + 0.3 * np.cos(i/4) for i in range(24)]
+            })
+            st.line_chart(sample_data.set_index('hour')[['temperature', 'ph']])
     
     with col2:
         st.markdown('<h2 class="section-header">Quick Analysis</h2>', unsafe_allow_html=True)
@@ -174,7 +176,8 @@ if page == "Dashboard":
         ]
         
         for param, value, min_val, max_val, status in parameters:
-            st.markdown(f'<div class="parameter-card"><strong>{param}:</strong> {value}<br><small>Range: {min_val}-{max_val} | Status: {status}</small></div>', unsafe_allow_html=True)
+            status_class = "good-status" if status == "Good" else "warning-status"
+            st.markdown(f'<div class="parameter-card"><strong>{param}:</strong> {value}<br><small>Range: {min_val}-{max_val} | Status: <span class="{status_class}">{status}</span></small></div>', unsafe_allow_html=True)
 
 # Page 2: Sensor Input
 elif page == "Sensor Input":
@@ -214,10 +217,20 @@ elif page == "Sensor Input":
             else:
                 checks.append(("Temperature", f"{temperature:.1f} °C", "Not optimal", "warning"))
             
+            # Dissolved Oxygen check
+            if dissolved_oxygen >= 6:
+                score += 1
+                checks.append(("Dissolved Oxygen", f"{dissolved_oxygen:.1f} mg/L", "Sufficient", "good"))
+            else:
+                checks.append(("Dissolved Oxygen", f"{dissolved_oxygen:.1f} mg/L", "Low", "danger"))
+            
             # Determine overall quality
-            if score >= 1:
-                overall = "Acceptable"
+            if score >= 2:
+                overall = "Good"
                 overall_class = "good-status"
+            elif score >= 1:
+                overall = "Fair"
+                overall_class = "warning-status"
             else:
                 overall = "Poor"
                 overall_class = "danger-status"
@@ -245,7 +258,14 @@ elif page == "Sensor Input":
             cols = st.columns(3)
             for i, (param, value, status, status_class) in enumerate(checks):
                 with cols[i % 3]:
-                    st.markdown(f'<div class="parameter-card"><strong>{param}</strong><br>{value}<br><small>{status}</small></div>', unsafe_allow_html=True)
+                    if status_class == "good":
+                        status_color = "good-status"
+                    elif status_class == "warning":
+                        status_color = "warning-status"
+                    else:
+                        status_color = "danger-status"
+                    
+                    st.markdown(f'<div class="parameter-card"><strong>{param}</strong><br>{value}<br><small>Status: <span class="{status_color}">{status}</span></small></div>', unsafe_allow_html=True)
 
 # Page 3: Historical Data
 elif page == "Historical Data":
@@ -272,6 +292,11 @@ elif page == "Historical Data":
             if 'ph' in df.columns:
                 st.line_chart(df[['ph']].tail(20))
         
+        # Additional chart
+        st.markdown('<h4 class="section-header">Water Quality Score Over Time</h4>', unsafe_allow_html=True)
+        if 'quality_score' in df.columns:
+            st.line_chart(df[['quality_score']].tail(20))
+        
         # Statistics
         st.markdown('<h3 class="section-header">Statistics Summary</h3>', unsafe_allow_html=True)
         
@@ -284,12 +309,22 @@ elif page == "Historical Data":
             with stats_col2:
                 if 'quality_score' in df.columns:
                     avg_score = df['quality_score'].mean()
-                    st.metric("Average Quality Score", f"{avg_score:.1f}/2")
+                    st.metric("Average Quality Score", f"{avg_score:.1f}/3")
             
             with stats_col3:
                 if 'overall_quality' in df.columns:
-                    good_count = (df['overall_quality'] == 'Acceptable').sum()
-                    st.metric("Acceptable Readings", good_count)
+                    good_count = (df['overall_quality'] == 'Good').sum()
+                    st.metric("Good Readings", good_count)
+        
+        # Quality distribution chart
+        st.markdown('<h4 class="section-header">Quality Distribution</h4>', unsafe_allow_html=True)
+        if 'overall_quality' in df.columns:
+            quality_counts = df['overall_quality'].value_counts()
+            quality_df = pd.DataFrame({
+                'Quality': quality_counts.index,
+                'Count': quality_counts.values
+            })
+            st.bar_chart(quality_df.set_index('Quality'))
         
         # Export option
         if st.button("Export Data to CSV"):
@@ -311,15 +346,15 @@ elif page == "System Status":
     
     with col1:
         st.markdown("### Application Status")
-        st.success("✓ Application running")
-        st.info(f"✓ Python {sys.version.split()[0]}")
-        st.info(f"✓ Pandas {pd.__version__}")
-        st.info(f"✓ NumPy {np.__version__}")
+        st.success("Application running")
+        st.info(f"Python {sys.version.split()[0]}")
+        st.info(f"Pandas {pd.__version__}")
+        st.info(f"NumPy {np.__version__}")
         
         if st.session_state.sensor_data:
-            st.success(f"✓ Data collected: {len(st.session_state.sensor_data)} readings")
+            st.success(f"Data collected: {len(st.session_state.sensor_data)} readings")
         else:
-            st.warning("⚠ No data collected yet")
+            st.warning("No data collected yet")
     
     with col2:
         st.markdown("### Model Information")
@@ -332,6 +367,12 @@ elif page == "System Status":
         st.metric("Response Time", "< 100ms")
         st.metric("Data Accuracy", "95%")
         st.metric("System Uptime", "100%")
+        
+        # Data statistics
+        if st.session_state.sensor_data:
+            df = pd.DataFrame(st.session_state.sensor_data)
+            if 'temperature' in df.columns:
+                st.metric("Avg Temperature", f"{df['temperature'].mean():.1f} °C")
 
 # Footer
 st.markdown('<div class="footer">', unsafe_allow_html=True)
